@@ -220,7 +220,7 @@ class Madara_Handler {
             trim($manga['url']),
             $schedule,
             '1',
-            '1988-01-27 00:00:00',
+            (new DateTime())->modify('-24 hours -5 minutes')->format('Y-m-d H:i:s'),
             '1000',
             'publish',
             'admin',
