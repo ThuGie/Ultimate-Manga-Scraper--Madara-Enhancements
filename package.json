@@ -1,0 +1,6 @@
+{
+  "name": "madara-enhancements-tests",
+  "private": true,
+  "scripts": {"test": "node --test tests/admin.test.cjs"},
+  "devDependencies": {"jquery": "3.7.1", "jsdom": "26.1.0"}
+}

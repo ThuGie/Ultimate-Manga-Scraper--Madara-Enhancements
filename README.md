@@ -1,75 +1,53 @@
 # Ultimate Manga Scraper: Madara Enhancements
 
-## Description
-The Ultimate Manga Scraper: Madara Enhancements plugin is designed to add extra support for the Madara theme to the Ultimate Web Novel & Manga Scraper. This plugin ensures compatibility and provides additional features to enhance your manga scraping experience.
+Browse a Madara site's titles from WordPress and add import rules to Ultimate Web Novel & Manga Scraper (UMS).
 
-### Key Features:
-- **Seamless Integration**: The plugin integrates seamlessly with the Madara theme, allowing you to scrape manga data without any compatibility issues.
-- **Configurable Manga Fetch URL**: Easily set and update the URL from which manga data will be fetched. This URL should point to the Madara theme's AJAX handler, ensuring that you always have the latest manga data.
-- **Advanced Search Options**: The plugin offers powerful search capabilities, allowing you to find manga based on different criteria such as New, Latest, Trending, Most Viewed, Rating, A-Z, and Relevance. This makes it easier to discover and manage manga content.
-- **Automatic Loading**: Enable or disable the auto-load feature to automatically load more manga as you scroll to the bottom of the page. This enhances the user experience by providing a continuous flow of content without manual intervention.
-- **Detailed Manga Information**: View comprehensive details about each manga, including title, cover image, description, genres, status, last updated date, and latest chapter. This ensures that you have all the information you need to make informed decisions about adding manga to your site.
-- **Add Manga to Your Site**: With just a click, you can add selected manga to your site. The plugin streamlines the process of importing manga content, saving you time and effort.
+## Requirements
 
-### Benefits:
-- **Enhanced User Experience**: By integrating with the Madara theme and providing additional features, the plugin enhances the overall user experience for both site administrators and visitors.
-- **Efficient Management**: The plugin's advanced search and auto-load features make it easier to manage large volumes of manga content, allowing you to focus on curating and presenting the best manga to your audience.
-- **Up-to-Date Content**: With the ability to set and update the manga fetch URL, you can ensure that your site always has the latest manga data, keeping your content fresh and engaging.
+- The [Madara theme](https://mangabooth.com/product/wp-madara/) or a Madara child theme.
+- Madara Core.
+- [Ultimate Web Novel & Manga Scraper](https://coderevolution.ro/web-novel-and-manga-scraper/).
+- PHP 7.4 or later with the DOM extension.
 
-### Use Cases:
-- **Manga Websites**: Perfect for manga websites that use the Madara theme and want to scrape and manage manga content efficiently.
-- **Web Novel Sites**: Can also be used by web novel sites that use the Ultimate Web Novel & Manga Scraper plugin, providing additional support and features for the Madara theme.
-- **Content Curators**: Ideal for content curators and site administrators who want to enhance their manga scraping capabilities and provide a better user experience for their visitors.
-
-## Features
-- **Compatibility with Madara Theme**: Seamlessly integrates with the Madara theme, ensuring smooth operation.
-- **Manga Fetch URL Configuration**: Allows you to set the URL for fetching manga data.
-- **Manga Search**: Search for manga using various search criteria including New, Latest, Trending, Most Viewed, Rating, A-Z, and Relevance.
-- **Auto Load More**: Option to enable automatic loading of more manga when scrolling to the bottom of the page.
-- **View and Add Manga**: View detailed information about each manga and add selected manga to your site.
-
-## Installation
-1. Ensure that the following dependencies are installed and active on your WordPress site:
-    - **Madara Theme**: A popular theme for manga websites. [Download Madara Theme](https://mangabooth.com/product/wp-madara/)
-    - **Madara Core Plugin**: Provides core functionality for the Madara theme. [Download Madara Core Plugin](https://mangabooth.com/product/madara-core/)
-    - **Ultimate Web Novel & Manga Scraper Plugin**: Scrapes manga and web novel data. [Download Ultimate Web Novel & Manga Scraper Plugin](https://coderevolution.ro/web-novel-and-manga-scraper/)
-
-2. Upload the plugin files to the `/wp-content/plugins/` directory, or install the plugin through the WordPress plugins screen directly.
-
-3. Activate the plugin through the 'Plugins' screen in WordPress.
+Upload this plugin's folder to `wp-content/plugins/`, then activate it in WordPress.
 
 ## Usage
-### Accessing the Admin Page
-After activation, the plugin adds a new menu item called **"Madara Enhancements"** to the WordPress admin panel. You can find it in the main menu.
 
-### Setting the Manga Fetch URL
-1. Navigate to **Madara Enhancements** in the admin menu.
-2. In the **Set Manga Fetch URL** section, enter the URL in the provided field.
-3. Click the **Save URL** button to save the URL.
+1. Open **Madara Enhancements** in the WordPress admin menu.
+2. Enter the source's AJAX URL, for example `https://wuxiaworld.site/wp-admin/admin-ajax.php`.
+3. Choose **Import destination**:
+   - **Generic Manga Scraper** for image-based manga.
+   - **Generic Web Novels Scraper** for text novels, including WuxiaWorld.
+4. Click **Save URL** to save both settings.
+5. Search by title and choose a sort order. Click **Add title** next to a result to create its rule.
+6. Use **Load More**, or enable **Auto Load More** to fetch more results as you scroll.
 
-### Searching for Manga
-1. Navigate to **Madara Enhancements** in the admin menu.
-2. In the **Search Manga** section, enter your search query and select a search type.
-3. Click the **Search** button to perform the search.
+The destination is an explicit choice for the source. Both kinds of content use Madara's `wp-manga` post type, so that post type alone cannot identify a novel. On mixed sites, search and import one content type at a time, saving the destination before each search.
 
-### Enabling Auto Load More
-1. Navigate to **Madara Enhancements** in the admin menu.
-2. In the **Enable Auto Load More** section, check the **Enable Auto Load More** checkbox.
+New rules run every 24 hours, publish under the administrator adding the rule, and allow up to 1,000 chapters. Edit these settings in UMS after adding a title. Titles already present in either generic rule list are hidden from results.
 
-### Viewing and Adding Manga
-1. Navigate to **Madara Enhancements** in the admin menu.
-2. In the manga list, review the manga details including title, cover image, description, genres, status, last updated date, and latest chapter.
-3. To add a manga to your site, click the **Add Manga** button next to the desired manga.
+## Updating from 1.0
 
-## Support
-For support, please contact the plugin author or visit the plugin's support page.
-Not existing yet..
+Select the correct destination before importing novels. This fixes [issue #1](https://github.com/ThuGie/Ultimate-Manga-Scraper--Madara-Enhancements/issues/1).
 
-## Author
-ThuGie
+Existing rules are left in place. If a novel was previously added to **Generic Manga Scraper**, remove its incorrect rule in UMS, select **Generic Web Novels Scraper** here, and add it again. Back up your rules first if you have customized them.
 
-## Version
-1.0
+Version 1.1.0 also corrects the rule field positions, handles missing source metadata and HTTP errors, checks administrator permissions on AJAX actions, escapes source data when building table rows, and prevents overlapping pagination requests. TLS certificate checks remain enabled.
+
+## Development
+
+Run the regression checks from the repository root:
+
+```sh
+php tests/run.php
+npm ci --ignore-scripts
+npm test
+```
+
+JavaScript dependencies are only needed for tests. They are not shipped to WordPress. GitHub Actions runs the PHP checks on 7.4, 8.3, and 8.4 and the browser behavior tests on Node 22.
+
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the reference sources and rule field mapping. The tests use WordPress boundary stubs; they do not replace testing on a WordPress installation with your licensed UMS and Madara versions. Sites may also block remote requests or customize their templates.
 
 ## License
-This plugin is licensed under the GPLv3 or later.
+
+GPLv3 or later. Maintained by ThuGie.
