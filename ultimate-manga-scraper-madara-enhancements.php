@@ -2,8 +2,8 @@
 /*
 Plugin Name: Ultimate Manga Scraper: Madara Enhancements
 Description: Adds extra support for the Madara theme to the Ultimate Web Novel & Manga Scraper.
-Version: 1.0
-Author: Your Name
+Version: 1.1.0
+Author: ThuGie
 */
 
 if (!defined('ABSPATH')) {
@@ -47,7 +47,7 @@ function madara_enhancements_enqueue_scripts($hook) {
     if ($hook != 'toplevel_page_madara-enhancements') {
         return;
     }
-    wp_enqueue_script('madara-enhancements', plugin_dir_url(__FILE__) . 'assets/js/madara-enhancements.js', array('jquery'), '1.0', true);
+    wp_enqueue_script('madara-enhancements', plugin_dir_url(__FILE__) . 'assets/js/madara-enhancements.js', array('jquery'), '1.1.0', true);
     wp_localize_script('madara-enhancements', 'madaraEnhancements', array(
         'ajaxUrl' => admin_url('admin-ajax.php'),
         'nonce' => wp_create_nonce('madara_enhancements_nonce')

@@ -31,16 +31,7 @@ class Madara_Handler {
 
     // Display the admin page
     public static function admin_page() {
-		 // Clear the madara_manga_list option on first load
-    update_option('madara_manga_list', []); // This empties the madara_manga_list
-        $manga_list = get_option('madara_manga_list', []); // Get the list of manga
-        $existing_manga_urls = array_map('trim', array_column(get_option('ums_manga_generic_list', []), 0)); // Get the list of existing manga URLs
-
-        // Filter out existing manga from the list
-        $filtered_manga_list = array_filter($manga_list, function($manga) use ($existing_manga_urls) {
-            return !in_array(trim($manga['url']), $existing_manga_urls);
-        });
-
+        $content_type = get_option('madara_content_type', 'manga');
         $manga_fetch_url = get_option('manga_fetch_url', 'https://manhuaus.com/wp-admin/admin-ajax.php'); // Get the current manga fetch URL
 
         ?>
@@ -59,10 +50,17 @@ class Madara_Handler {
                 <button type="button" class="button button-primary" id="save-url-settings">Save URL</button>
             </form>
 
+            <p><label for="content-type">Import destination</label>
+                <select id="content-type">
+                    <option value="manga" <?php selected($content_type, 'manga'); ?>>Generic Manga Scraper</option>
+                    <option value="novel" <?php selected($content_type, 'novel'); ?>>Generic Web Novels Scraper</option>
+                </select>
+                Choose the source's content type, then click Save URL before searching.
+            </p>
             <!-- Search Form -->
             <hr />
             <form id="search-form">
-                <h2>Search Manga</h2>
+                <h2>Search titles</h2>
                 <label for="search-query">Search Query</label>
                 <input type="text" id="search-query" name="search-query" class="regular-text" />
                 <label for="search-type">Search Type</label>
@@ -84,7 +82,7 @@ class Madara_Handler {
                 <label for="auto-load-more">
                     <input type="checkbox" id="auto-load-more" /> Enable Auto Load More
                 </label>
-                <p id="manga-count">Manga Loaded: 0</p>
+                <p id="manga-count">Titles loaded: 0</p>
             </div>
             <table class="widefat" id="manga-table">
                 <thead>
@@ -101,24 +99,6 @@ class Madara_Handler {
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($filtered_manga_list as $index => $manga): ?>
-                        <tr>
-                            <td><?php echo esc_html($index + 1); ?></td>
-                            <td><?php echo esc_html($manga['title']); ?></td>
-                            <td><img src="<?php echo esc_url($manga['cover_image']); ?>" alt="<?php echo esc_attr($manga['title']); ?>" width="100"></td>
-                            <td><?php echo esc_html($manga['description']); ?></td>
-                            <td><?php echo esc_html($manga['genres']); ?></td>
-                            <td><?php echo esc_html($manga['status']); ?></td>
-                            <td><?php echo esc_html($manga['last_updated']); ?></td>
-                            <td><?php echo esc_html($manga['latest_chapter']); ?></td>
-                            <td>
-                                <form method="post" class="add-manga-form">
-                                    <input type="hidden" name="add_manga_url" value="<?php echo esc_attr($manga['url']); ?>">
-                                    <button type="submit" class="button button-primary">Add Manga</button>
-                                </form>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
                 </tbody>
             </table>
             <button id="load-more" class="button button-secondary">Load More</button> <!-- Load More Button -->
@@ -126,59 +106,53 @@ class Madara_Handler {
         <?php
     }
 
-    // Handle AJAX request to load more manga
-    public static function load_more_manga() {
-        check_ajax_referer('madara_enhancements_nonce', '_ajax_nonce'); // Verify nonce for security
-
-        $page = isset($_POST['page']) ? intval($_POST['page']) : 0; // Get the current page
-        $query = isset($_POST['query']) ? sanitize_text_field($_POST['query']) : ''; // Get the search query
-        $type = isset($_POST['type']) ? sanitize_text_field($_POST['type']) : ''; // Get the search type
-
-        $manga_list = Madara_Fetcher::get_manga_data($page, $query, $type); // Fetch manga data
-        error_log('Fetched manga data: ' . print_r($manga_list, true));
-
-        $existing_manga_urls = array_map('trim', array_column(get_option('ums_manga_generic_list', []), 0)); // Get the list of existing manga URLs
-
-        // Filter out existing manga from the list
-        $filtered_manga_list = array_filter($manga_list, function($manga) use ($existing_manga_urls) {
-            return !in_array(trim($manga['url']), $existing_manga_urls);
-        });
-        error_log('Filtered manga list: ' . print_r($filtered_manga_list, true));
-
-        if (isset($manga_list['error'])) {
-            wp_send_json_error($manga_list['error']); // Send error response if there's an error
-        } else {
-            // Append new manga to the existing list
-            $current_manga_list = get_option('madara_manga_list', []);
-            $updated_manga_list = array_merge($current_manga_list, $filtered_manga_list);
-            update_option('madara_manga_list', $updated_manga_list); // Update the option with the latest manga list
-            error_log('Updated manga list: ' . print_r($updated_manga_list, true));
-            wp_send_json_success($filtered_manga_list); // Send success response with the filtered manga list
+    private static function check_ajax_access() {
+        check_ajax_referer('madara_enhancements_nonce', '_ajax_nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('You do not have permission to manage scraper rules.', 403);
+            exit;
         }
+    }
+
+    private static function existing_urls() {
+        $rules = array_merge(
+            (array) get_option('ums_manga_generic_list', []),
+            (array) get_option('ums_novel_generic_list', [])
+        );
+        $urls = [];
+        foreach ($rules as $rule) {
+            if (is_array($rule) && isset($rule[0])) {
+                $urls[] = trim($rule[0]);
+            }
+        }
+        return $urls;
+    }
+
+    // Search and pagination share the same validation and cache handling.
+    public static function load_more_manga() {
+        self::search_manga();
     }
 
     // Handle AJAX request to add manga
     public static function add_manga() {
-        check_ajax_referer('madara_enhancements_nonce', '_ajax_nonce'); // Verify nonce for security
+        self::check_ajax_access();
 
-        $url = isset($_POST['add_manga_url']) ? sanitize_text_field($_POST['add_manga_url']) : null; // Get the manga URL
+        $url = isset($_POST['add_manga_url']) ? esc_url_raw(wp_unslash($_POST['add_manga_url'])) : null; // Get the manga URL
 
         $manga_list = get_option('madara_manga_list', []); // Get the current manga list
-        error_log('Current manga list: ' . print_r($manga_list, true));
 
         if ($url !== null) {
             $manga_to_add = array_filter($manga_list, function ($manga) use ($url) {
                 return $manga['url'] === $url;
             });
-            error_log('Manga to add: ' . print_r($manga_to_add, true));
 
             if (!empty($manga_to_add)) {
                 $manga_to_add = array_values($manga_to_add)[0];
 
                 // Check if the manga already exists in the saved rules
-                $rules = get_option('ums_manga_generic_list', []);
-                foreach ($rules as $rule) {
-                    if (trim($rule[0]) === trim($manga_to_add['url'])) {
+                $existing_urls = self::existing_urls();
+                foreach ($existing_urls as $existing_url) {
+                    if ($existing_url === trim($manga_to_add['url'])) {
                         wp_send_json_error('Manga already exists.');
                         return;
                     }
@@ -191,7 +165,6 @@ class Madara_Handler {
                     return $manga['url'] !== $url;
                 });
                 update_option('madara_manga_list', $manga_list); // Update the manga list
-                error_log('Updated manga list after adding: ' . print_r($manga_list, true));
 
                 wp_send_json_success(); // Send success response
             } else {
@@ -204,98 +177,88 @@ class Madara_Handler {
 
     // Save manga rules
     public static function save_manga_rules($manga) {
-        // Clear the cache for the option
-        $GLOBALS['wp_object_cache']->delete('ums_manga_generic_list', 'options');
+        $is_novel = isset($manga['content_type']) && $manga['content_type'] === 'novel';
+        $option = $is_novel ? 'ums_novel_generic_list' : 'ums_manga_generic_list';
+        $rules = (array) get_option($option, []);
 
-        // Get current rules
-        $rules = get_option('ums_manga_generic_list', []);
+        // Keep this order aligned with UMS's Generic Manga Scraper form.
+        $new_rule = [
+            trim($manga['url']), // location
+            '24', // schedule (hours)
+            '1', // active
+            (new DateTime())->modify('-24 hours -5 minutes')->format('Y-m-d H:i:s'), // last_run
+            '1000', // max chapters
+            'publish', // submit_status
+            wp_get_current_user()->user_login, // post_author
+            '', // default_tags
+            '', // default_category
+            'genre', // auto_categories
+            'genre', // auto_tags
+            '', // use_phantom
+            '0', // max_manga (unlimited)
+            '', // chapter_warning
+            '1', // enable_comments
+            '0', // enable_pingback
+            '0', // get_date
+            '0', // rule_translate
+            '0', // no_translate_title
+        ];
+        if ($is_novel) {
+            // The novel form inserts reverse_chapters before max_manga.
+            array_splice($new_rule, 12, 0, ['1']);
+            $new_rule = array_merge($new_rule, [
+                '', // chapter_slug
+                '0', // phantom_wait
+                '', // always_first
+                '0', // strip_images
+            ]);
+        }
+        $rules[] = $new_rule;
+        update_option($option, $rules, false);
+    }
 
-        // Validate the schedule format
-        $schedule = '24';
-        if (!is_numeric($schedule) || $schedule <= 0) {
-            $schedule = '24';
+    public static function search_manga() {
+        self::check_ajax_access();
+        $query = isset($_POST['query']) ? sanitize_text_field(wp_unslash($_POST['query'])) : '';
+        $type = isset($_POST['type']) ? sanitize_text_field(wp_unslash($_POST['type'])) : '';
+        $page = isset($_POST['page']) ? max(0, intval($_POST['page'])) : 0;
+        $content_type = get_option('madara_content_type', 'manga');
+        $manga_list = Madara_Fetcher::get_manga_data($page, $query, $type);
+        if (isset($manga_list['error'])) {
+            wp_send_json_error($manga_list['error']);
+            return;
         }
 
-        $new_rule = [
-            trim($manga['url']),
-            $schedule,
-            '1',
-            (new DateTime())->modify('-24 hours -5 minutes')->format('Y-m-d H:i:s'),
-            '1000',
-            'publish',
-            'admin',
-            '',
-            '',
-            'genre',
-            'genre',
-            '',
-            '1',
-            '0',
-            '1',
-            '0',
-            '0',
-            '0',
-            '0',
-        ];
-
-        $rules[] = $new_rule;
-        update_option('ums_manga_generic_list', $rules); // Update the rules option
+        $existing_urls = self::existing_urls();
+        $filtered = [];
+        $cached = $page === 0 ? [] : (array) get_option('madara_manga_list', []);
+        $seen = array_column($cached, 'url');
+        foreach ($manga_list as $manga) {
+            if (!in_array(trim($manga['url']), $existing_urls, true) && !in_array($manga['url'], $seen, true)) {
+                $manga['content_type'] = $content_type;
+                $filtered[] = $manga;
+                $seen[] = $manga['url'];
+            }
+        }
+        update_option('madara_manga_list', array_merge($cached, $filtered), false);
+        // An empty filtered page can still have more source pages.
+        wp_send_json_success(['items' => $filtered, 'has_more' => count($manga_list) > 0]);
     }
-
-    // Enqueue scripts for the admin page
-    public static function enqueue_scripts() {
-        wp_enqueue_script('madara-enhancements', plugin_dir_url(__FILE__) . '../assets/js/madara-enhancements.js', ['jquery'], null, true);
-        wp_localize_script('madara-enhancements', 'madaraEnhancements', [
-            'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('madara_enhancements_nonce'),
-        ]);
-    }
-
-    // Handle AJAX request to search manga
-// Handle AJAX request to search manga
-public static function search_manga() {
-    check_ajax_referer('madara_enhancements_nonce', '_ajax_nonce'); // Verify nonce for security
-
-    $query = isset($_POST['query']) ? sanitize_text_field($_POST['query']) : ''; // Get the search query
-    $type = isset($_POST['type']) ? sanitize_text_field($_POST['type']) : ''; // Get the search type
-    $page = isset($_POST['page']) ? intval($_POST['page']) : 0; // Get the page number
-
-    // Fetch manga data from the URL
-    $manga_list = Madara_Fetcher::get_manga_data($page, $query, $type);
-    error_log('Fetched manga data: ' . print_r($manga_list, true));
-
-    // Check if there was an error fetching the manga data
-    if (isset($manga_list['error'])) {
-        wp_send_json_error($manga_list['error']); // Send error response if there's an error
-        return;
-    }
-
-    $existing_manga_urls = array_map('trim', array_column(get_option('ums_manga_generic_list', []), 0)); // Get the list of existing manga URLs
-
-    // Filter out existing manga from the list
-    $filtered_manga_list = array_filter($manga_list, function($manga) use ($existing_manga_urls) {
-        return !in_array(trim($manga['url']), $existing_manga_urls);
-    });
-    error_log('Filtered manga list: ' . print_r($filtered_manga_list, true));
-
-    // Get the current madara_manga_list
-    $current_manga_list = get_option('madara_manga_list', []);
-    // Merge the current list with the new filtered list
-    $updated_manga_list = array_merge($current_manga_list, $filtered_manga_list);
-    // Update the madara_manga_list with the combined list
-    update_option('madara_manga_list', $updated_manga_list);
-    error_log('Updated madara_manga_list: ' . print_r($updated_manga_list, true));
-
-    wp_send_json_success(array_values($filtered_manga_list)); // Send success response with the filtered manga list
-}
 
     // Handle AJAX request to save the manga fetch URL
     public static function save_manga_fetch_url() {
-        check_ajax_referer('madara_enhancements_nonce', '_ajax_nonce'); // Verify nonce for security
+        self::check_ajax_access();
         
-        $manga_fetch_url = isset($_POST['manga_fetch_url']) ? esc_url_raw($_POST['manga_fetch_url']) : ''; // Get the manga fetch URL
+        $manga_fetch_url = isset($_POST['manga_fetch_url']) ? esc_url_raw(wp_unslash($_POST['manga_fetch_url'])) : ''; // Get the manga fetch URL
         
-        if ($manga_fetch_url) {
+        $content_type = isset($_POST['content_type']) ? sanitize_text_field(wp_unslash($_POST['content_type'])) : 'manga';
+        if (!in_array($content_type, ['manga', 'novel'], true)) {
+            wp_send_json_error('Invalid content type.');
+            return;
+        }
+        if ($manga_fetch_url && wp_http_validate_url($manga_fetch_url)) {
+            update_option('madara_content_type', $content_type);
+            update_option('madara_manga_list', [], false);
             update_option('manga_fetch_url', $manga_fetch_url); // Update the manga fetch URL option
             wp_send_json_success(); // Send success response
         } else {
@@ -303,6 +266,3 @@ public static function search_manga() {
         }
     }
 }
-
-// Initialize the handler class
-Madara_Handler::init();

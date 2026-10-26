@@ -1,304 +1,150 @@
-jQuery(document).ready(function($) {
-    var page = 0; // Initialize the current page number
-    var currentQuery = localStorage.getItem('searchQuery') || ''; // Initialize the current search query from localStorage
-    var currentType = localStorage.getItem('searchType') || ''; // Initialize the current search type from localStorage
-    var autoLoadMoreEnabled = localStorage.getItem('autoLoadMoreEnabled') === 'true'; // Initialize auto-load more flag
-    var resultsThreshold = 5; // Threshold for the minimum number of results to trigger auto-load
-    var totalMangaCount = 0; // Initialize the total manga count
+jQuery(function($) {
+    var page = -1;
+    var loading = false;
+    var hasMore = true;
+    var request = null;
+    var generation = 0;
+    var query = '';
+    var type = 'new';
+    var seen = new Set();
 
-    // Set the input fields with the retrieved values
-    $('#search-query').val(currentQuery);
-    $('#search-type').val(currentType);
-
-    // Set the state of the auto-load checkbox based on saved setting
-    $('#auto-load-more').prop('checked', autoLoadMoreEnabled);
-    toggleLoadMoreButton(autoLoadMoreEnabled);
-
-    // Attach or detach the scroll event handler based on auto-load more setting
-    if (autoLoadMoreEnabled) {
-        $(window).on('scroll', debounce(handleScroll, 200));
-    } else {
-        $(window).off('scroll', handleScroll);
+    function updateRows() {
+        var rows = $('#manga-table tbody tr');
+        rows.each(function(index) { $(this).find('td:first').text(index + 1); });
+        $('#manga-count').text('Titles loaded: ' + rows.length);
+        $('#load-more').prop('disabled', loading || !hasMore).toggle(!$('#auto-load-more').is(':checked'));
     }
 
-    // Save URL settings
-    $('#save-url-settings').on('click', function() {
-        var mangaFetchUrl = $('#manga-fetch-url').val(); // Get the manga fetch URL from the input field
+    function safeUrl(value) {
+        try {
+            var url = new URL(value);
+            return /^(https?:)$/.test(url.protocol) ? url.href : '';
+        } catch (error) {
+            return '';
+        }
+    }
 
-        // Save the URL setting via AJAX
+    function appendItems(items) {
+        items.forEach(function(item) {
+            if (seen.has(item.url)) { return; }
+            seen.add(item.url);
+            var row = $('<tr>').appendTo('#manga-table tbody');
+            row.append($('<td>'), $('<td>').text(item.title));
+            row.append($('<td>').append($('<img>').attr({src: safeUrl(item.cover_image), alt: item.title, width: 100})));
+            ['description', 'genres', 'status', 'last_updated', 'latest_chapter'].forEach(function(field) {
+                row.append($('<td>').text(item[field]));
+            });
+            var form = $('<form>').addClass('add-manga-form');
+            form.append($('<input>').attr({type: 'hidden', name: 'add_manga_url'}).val(item.url));
+            form.append($('<button>').attr('type', 'submit').addClass('button button-primary').text('Add title'));
+            row.append($('<td>').append(form));
+        });
+    }
+
+    function loadPage() {
+        if (loading || !hasMore) { return; }
+        loading = true;
+        updateRows();
+        var nextPage = page + 1;
+        var succeeded = false;
+        var currentGeneration = generation;
+        request = $.ajax({
+            url: madaraEnhancements.ajaxUrl,
+            method: 'POST',
+            data: {action: 'search_manga', page: nextPage, query: query, type: type, _ajax_nonce: madaraEnhancements.nonce}
+        }).done(function(response) {
+            if (currentGeneration !== generation) { return; }
+            if (!response.success) {
+                alert('Search failed: ' + response.data);
+                return;
+            }
+            succeeded = true;
+            page = nextPage;
+            hasMore = response.data.has_more;
+            appendItems(response.data.items);
+        }).fail(function(xhr, status) {
+            if (status !== 'abort') { alert('Could not load titles. Please try again.'); }
+        }).always(function() {
+            if (currentGeneration !== generation) { return; }
+            loading = false;
+            request = null;
+            updateRows();
+            // Fill a short viewport, including pages containing only imported titles.
+            if (succeeded && hasMore && $('#auto-load-more').is(':checked') && $(document).height() <= $(window).height()) {
+                setTimeout(function() {
+                    if (currentGeneration === generation && $('#auto-load-more').is(':checked')) { loadPage(); }
+                }, 200);
+            }
+        });
+    }
+
+    function resetSearch() {
+        generation++;
+        if (request) { request.abort(); }
+        loading = false;
+        page = -1;
+        hasMore = true;
+        seen.clear();
+        $('#manga-table tbody').empty();
+        query = $('#search-query').val();
+        type = $('#search-type').val();
+        updateRows();
+        loadPage();
+    }
+
+    $('#search-form').on('submit', function(event) { event.preventDefault(); resetSearch(); });
+    $('#search-button').on('click', resetSearch);
+    $('#load-more').on('click', loadPage);
+    $('#auto-load-more').on('change', function() {
+        updateRows();
+        if ($(this).is(':checked') && $('#manga-table tbody tr').length === 0) { loadPage(); }
+    });
+    var scrollTimer;
+    $(window).on('scroll.madaraEnhancements', function() {
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(function() {
+            if ($('#auto-load-more').is(':checked') && $(window).scrollTop() + $(window).height() >= $(document).height() - 100) {
+                loadPage();
+            }
+        }, 200);
+    });
+
+    $('#url-settings-form').on('submit', function(event) { event.preventDefault(); });
+    $('#save-url-settings').on('click', function() {
+        var button = $(this).prop('disabled', true);
+        // Finish or abort the old source request before resetting its server cache.
+        generation++;
+        if (request) { request.abort(); }
+        loading = false;
         $.ajax({
             url: madaraEnhancements.ajaxUrl,
             method: 'POST',
             data: {
                 action: 'save_manga_fetch_url',
-                manga_fetch_url: mangaFetchUrl,
+                manga_fetch_url: $('#manga-fetch-url').val(),
+                content_type: $('#content-type').val(),
                 _ajax_nonce: madaraEnhancements.nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    alert('URL saved successfully!'); // Display success message
-                } else {
-                    alert('Failed to save URL: ' + response.data); // Display error message
-                }
-            },
-            error: function(xhr, status, error) {
-                console.error('AJAX Error:', status, error); // Log the error to the console
-                alert('Failed to save URL: ' + error); // Display error message
             }
-        });
+        }).done(function(response) {
+            if (response.success) { resetSearch(); }
+            else { alert('Could not save settings: ' + response.data); }
+        }).fail(function() { alert('Could not save settings. Please try again.'); })
+          .always(function() { button.prop('disabled', false); });
     });
 
-    // Perform search
-    $('#search-button').on('click', function() {
-        currentQuery = $('#search-query').val(); // Get the search query from the input field
-        currentType = $('#search-type').val(); // Get the search type from the dropdown
-        page = 0; // Reset the page number
-        totalMangaCount = 0; // Reset the total manga count
-
-        // Save the search query, type, and page in localStorage
-        localStorage.setItem('searchQuery', currentQuery);
-        localStorage.setItem('searchType', currentType);
-        localStorage.setItem('currentPage', page);
-
-        // Clear the existing cache
-        clearCache();
-
-        // Perform the search via AJAX
-        performSearch(currentQuery, currentType, page);
-    });
-
-    // Auto-load more manga if enabled
-    $('#auto-load-more').on('change', function() {
-        autoLoadMoreEnabled = $(this).is(':checked'); // Update the auto-load more flag
-        localStorage.setItem('autoLoadMoreEnabled', autoLoadMoreEnabled); // Save the setting in local storage
-        toggleLoadMoreButton(autoLoadMoreEnabled);
-
-        // Attach or detach the scroll event handler based on auto-load more setting
-        if (autoLoadMoreEnabled) {
-            $(window).on('scroll', debounce(handleScroll, 200));
-        } else {
-            $(window).off('scroll', handleScroll);
-        }
-    });
-
-    // Load more manga when the "Load More" button is clicked
-    $('#load-more').on('click', function() {
-        page++;
-        localStorage.setItem('currentPage', page); // Save the current page in localStorage
-        fetchMoreManga(page, currentQuery, currentType); // Fetch more manga using the updated page number
-    });
-
-    // Handle scroll for infinite loading
-    function handleScroll() {
-        if (autoLoadMoreEnabled && $(window).scrollTop() + $(window).height() >= $(document).height() - 100) {
-            page++;
-            localStorage.setItem('currentPage', page); // Save the current page in localStorage
-            fetchMoreManga(page, currentQuery, currentType);
-        }
-    }
-
-    // Debounce function to limit the rate at which a function can fire
-    function debounce(func, wait) {
-        var timeout;
-        return function() {
-            var context = this, args = arguments;
-            clearTimeout(timeout);
-            timeout = setTimeout(function() {
-                func.apply(context, args);
-            }, wait);
-        };
-    }
-
-    // Function to perform search via AJAX
-    function performSearch(query, type, page) {
-        console.log("Performing search with query:", query, "type:", type, "page:", page);
-        $.ajax({
-            url: madaraEnhancements.ajaxUrl,
-            method: 'POST',
-            data: {
-                action: 'search_manga',
-                query: query,
-                type: type,
-                _ajax_nonce: madaraEnhancements.nonce,
-                page: page
-            },
-            success: function(response) {
-                console.log("Search response:", response);
-                if (response.success) {
-                    var results = response.data;
-                    if (results.length === 0) {
-                        alert('No manga found for this search.');
-                        return;
-                    }
-                    var mangaCache = JSON.parse(localStorage.getItem('mangaCache')) || [];
-                    if (!Array.isArray(mangaCache)) {
-                        mangaCache = [];
-                    }
-                    mangaCache = results; // Replace the cache with new results
-                    localStorage.setItem('mangaCache', JSON.stringify(mangaCache)); // Save the updated cache in localStorage
-                    totalMangaCount = mangaCache.length;
-                    updateMangaTable(mangaCache); // Update the table with the search results
-
-                    // Update the manga count display
-                    $('#manga-count').text('Manga Loaded: ' + totalMangaCount);
-
-                    // Show the load more button if auto-load is disabled
-                    toggleLoadMoreButton(autoLoadMoreEnabled);
-
-                    // Check if more results need to be loaded
-                    checkAndLoadMoreResults(results.length);
-                } else {
-                    console.error('Search failed:', response.data);
-                    alert('Search failed: ' + response.data); // Display error message
-                }
-            },
-            error: function(xhr, status, error) {
-                console.error('AJAX Error:', status, error); // Log the error to the console
-                alert('Search failed: ' + error); // Display error message
-            }
-        });
-    }
-
-    // Function to fetch more manga via AJAX
-    function fetchMoreManga(page, query = '', type = '') {
-        console.log("Fetching more manga with query:", query, "type:", type, "page:", page);
-        $.ajax({
-            url: madaraEnhancements.ajaxUrl,
-            method: 'POST',
-            data: {
-                action: query || type ? 'search_manga' : 'load_more_manga',
-                page: page,
-                query: query,
-                type: type,
-                _ajax_nonce: madaraEnhancements.nonce
-            },
-            success: function(response) {
-                console.log("Fetch more response:", response);
-                if (response.success) {
-                    var mangaList = response.data;
-                    if (mangaList.length === 0) {
-                        alert('No more manga found.');
-                        return;
-                    }
-                    var mangaCache = JSON.parse(localStorage.getItem('mangaCache')) || [];
-                    if (!Array.isArray(mangaCache)) {
-                        mangaCache = [];
-                    }
-                    mangaCache = mangaCache.concat(mangaList); // Append the new results to the cache
-                    localStorage.setItem('mangaCache', JSON.stringify(mangaCache)); // Save the updated cache in localStorage
-                    totalMangaCount = mangaCache.length;
-                    appendMangaTable(mangaList); // Append the new results to the table
-
-                    // Update the manga count display
-                    $('#manga-count').text('Manga Loaded: ' + totalMangaCount);
-
-                    // Check if more results need to be loaded
-                    checkAndLoadMoreResults(mangaList.length);
-                } else {
-                    console.error('Failed to load more manga:', response.data);
-                    alert('Failed to load more manga: ' + response.data); // Display error message
-                }
-            },
-            error: function(xhr, status, error) {
-                console.error('AJAX Error:', status, error); // Log the error to the console
-                alert('Failed to load more manga: ' + error); // Display error message
-            }
-        });
-    }
-
-    // Function to clear the existing cache
-    function clearCache() {
-        $('#manga-table tbody').empty(); // Clear the table body
-        localStorage.removeItem('mangaCache'); // Remove the cache from localStorage
-        $('#manga-count').text('Manga Loaded: 0'); // Update the manga count display
-    }
-
-    // Function to update the manga table with new data
-    function updateMangaTable(mangaList) {
-        $('#manga-table tbody').empty(); // Clear the table body
-        appendMangaTable(mangaList); // Append new manga data to the table
-    }
-
-    // Function to append new manga data to the table
-    function appendMangaTable(mangaList) {
-        var mangaTable = $('#manga-table tbody');
-
-        // Iterate through the manga list and append rows to the table
-        $.each(mangaList, function(index, manga) {
-            var row = $('<tr>').appendTo(mangaTable);
-            row.append($('<td>').text(totalMangaCount - mangaList.length + index + 1)); // Add the manga count as the first column
-            row.append($('<td>').text(manga.title));
-            row.append($('<td>').html('<img src="' + manga.cover_image + '" alt="' + manga.title + '" width="100">'));
-            row.append($('<td>').text(manga.description));
-            row.append($('<td>').text(manga.genres));
-            row.append($('<td>').text(manga.status));
-            row.append($('<td>').text(manga.last_updated));
-            row.append($('<td>').text(manga.latest_chapter));
-            row.append($('<td>').html('<form method="post" class="add-manga-form"><input type="hidden" name="add_manga_url" value="' + manga.url + '"><button type="submit" class="button button-primary">Add Manga</button></form>'));
-        });
-    }
-
-    // Event delegation for "Add Manga" forms
     $(document).on('submit', '.add-manga-form', function(event) {
-        event.preventDefault(); // Prevent the default form submission
+        event.preventDefault();
         var form = $(this);
-        var formData = form.serialize(); // Serialize the form data
-        var row = form.closest('tr'); // Get the parent row of the form
-
-        console.log("Adding manga:", formData); // Log form data for debugging
-
-        // Add manga via AJAX
+        var button = form.find('button').prop('disabled', true);
         $.ajax({
             url: madaraEnhancements.ajaxUrl,
             method: 'POST',
-            data: formData + '&action=add_manga&_ajax_nonce=' + madaraEnhancements.nonce,
-            success: function(response) {
-                console.log("Add manga response:", response); // Log response for debugging
-                if (response.success) {
-                    alert('Manga added successfully!'); // Display success message
-                    row.remove(); // Remove the row from the table
-                    updateMangaNumbers(); // Update the manga numbers after removal
-
-                    // Check if more results need to be loaded
-                    checkAndLoadMoreResults(0); // Pass 0 since we removed one row
-                } else {
-                    console.error('Failed to add manga:', response.data);
-                    alert('Failed to add manga: ' + response.data); // Display error message
-                }
-            },
-            error: function(xhr, status, error) {
-                console.error('AJAX Error:', status, error); // Log the error to the console
-                alert('Failed to add manga: ' + error); // Display error message
-            }
-        });
+            data: {action: 'add_manga', add_manga_url: form.find('input').val(), _ajax_nonce: madaraEnhancements.nonce}
+        }).done(function(response) {
+            if (response.success) { form.closest('tr').remove(); updateRows(); }
+            else { alert('Could not add title: ' + response.data); }
+        }).fail(function() { alert('Could not add title. Please try again.'); })
+          .always(function() { button.prop('disabled', false); });
     });
-
-    // Function to toggle the visibility of the "Load More" button
-    function toggleLoadMoreButton(autoLoadMoreEnabled) {
-        if (autoLoadMoreEnabled) {
-            $('#load-more').hide();
-        } else {
-            $('#load-more').show();
-        }
-    }
-
-    // Function to update manga numbers after a row is removed
-    function updateMangaNumbers() {
-        var mangaRows = $('#manga-table tbody tr').filter(function() {
-            return $(this).is(':visible'); // Only count visible rows
-        });
-        mangaRows.each(function(index, row) {
-            $(row).find('td:first').text(index + 1); // Update the number in the first column
-        });
-        $('#manga-count').text('Manga Loaded: ' + mangaRows.length); // Update the manga count display
-    }
-
-    // Function to check and load more results if needed
-    function checkAndLoadMoreResults(resultsLength) {
-        if (resultsLength < resultsThreshold && $(document).height() <= $(window).height()) {
-            page++;
-            localStorage.setItem('currentPage', page); // Save the current page in localStorage
-            fetchMoreManga(page, currentQuery, currentType);
-        }
-    }
+    updateRows();
 });

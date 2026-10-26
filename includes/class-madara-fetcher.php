@@ -25,13 +25,9 @@ class Madara_Fetcher {
         $vars = [
             's' => $query,
             'orderby' => 'meta_value_num',
-            'paged' => $page,
+            'paged' => 1,
             'template' => 'search',
-            'meta_query' => [
-                [
-                    'relation' => 'AND'
-                ]
-            ],
+            'meta_query' => [],
             'post_type' => 'wp-manga',
             'post_status' => 'publish',
             'meta_key' => '_latest_update',
@@ -43,6 +39,7 @@ class Madara_Fetcher {
         switch ($type) {
             case 'new':
                 $vars['orderby'] = 'date';
+                unset($vars['meta_key']);
                 break;
             case 'latest':
                 $vars['orderby'] = 'meta_value_num';
@@ -60,11 +57,9 @@ class Madara_Fetcher {
                 $vars['order'] = 'desc';
                 break;
             case 'rating':
-                $vars['orderby'] = [
-                    ['query_avarage_reviews' => 'DESC'],
-                    ['query_total_reviews' => 'DESC']
-                ];
-                $vars['meta_query'][] = [
+                $vars['orderby'] = ['query_avarage_reviews' => 'DESC', 'query_total_reviews' => 'DESC'];
+                unset($vars['meta_key']);
+                $vars['meta_query'] = [
                     'query_avarage_reviews' => [
                         'key' => '_manga_avarage_reviews'
                     ],
@@ -74,153 +69,121 @@ class Madara_Fetcher {
                 ];
                 break;
             case 'a_z':
-                $vars['orderby'] = 'post_title';
+                $vars['orderby'] = 'title';
+                unset($vars['meta_key']);
                 $vars['order'] = 'ASC';
                 break;
             case 'relevance':
-                // No additional parameters needed for relevance
+                $vars['orderby'] = 'relevance';
+                unset($vars['meta_key']);
                 break;
         }
 
-        // Prepare the arguments for the HTTP request
-        $args = [
-            'sslverify' => false,
+        $response = wp_safe_remote_post($url, [
+            'timeout' => 30,
             'body' => [
                 'action' => 'madara_load_more',
-                'page' => $page,
+                'page' => max(0, (int) $page),
                 'template' => 'madara-core/content/content-search',
-                'vars' => $vars
-            ]
-        ];
-
-        // Perform the HTTP request to fetch manga data
-        $response = wp_remote_post($url, $args);
-
-        // Check for errors in the response
-        if (is_wp_error($response)) {
-            return ['error' => $response->get_error_message()];
-        }
-
-        // Retrieve and process the response body
-        $html = wp_remote_retrieve_body($response);
-        $html = mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8');
-
-        // Load the HTML into a DOMDocument for parsing
-        libxml_use_internal_errors(true);
-        $dom = new DOMDocument();
-        $dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-        libxml_clear_errors();
-
-        // Use XPath to query the DOM for manga items
-        $xpath = new DOMXPath($dom);
-        $manga_items = $xpath->query('//div[contains(@class, "c-tabs-item__content")]');
-        $manga_list = [];
-
-        // Iterate through the manga items and extract data
-        foreach ($manga_items as $item) {
-            $title = $xpath->query('.//div[@class="post-title"]/h3[@class="h4"]/a', $item)->item(0)->nodeValue;
-            $cover_image = $xpath->query('.//div[@class="tab-thumb c-image-hover"]/a/img', $item)->item(0)->getAttribute('data-src');
-            $description = '';
-            $genres = [];
-            $status = '';
-            
-            $index = 0;
-            $summary_headings = $xpath->query('.//div[@class="summary-heading"]/h5', $item);
-
-            // Extract specific details based on the summary headings
-            foreach ($summary_headings as $heading) {
-                $heading_text = trim($heading->nodeValue);
-                if ($heading_text === 'Alternative') {
-                    $description = $xpath->query('.//div[@class="summary-content"]', $item)->item($index)->nodeValue;
-                    $index++;
-                } elseif ($heading_text === 'Authors' || $heading_text === 'Artists') {
-                    $index++;
-                } elseif ($heading_text === 'Genres') {
-                    $genres = [];
-                    $genre_elements = $xpath->query('.//div[@class="summary-content"]', $item)->item($index)->getElementsByTagName('a');
-                    foreach ($genre_elements as $genre) {
-                        $genres[] = $genre->nodeValue;
-                    }
-                    $index++;
-                } elseif ($heading_text === 'Status') {
-                    $status = $xpath->query('.//div[@class="summary-content"]', $item)->item($index)->nodeValue;
-                    $index++;
-                }
-            }
-
-            // Extract additional details like last updated date and latest chapter
-            $last_updated = $xpath->query('.//div[@class="meta-item post-on"]/span[@class="font-meta"]', $item)->item(0)->nodeValue;
-            $latest_chapter = $xpath->query('.//div[@class="meta-item latest-chap"]/span[@class="font-meta chapter"]/a', $item)->item(0)->nodeValue;
-            $url = $xpath->query('.//div[@class="post-title"]/h3[@class="h4"]/a', $item)->item(0)->getAttribute('href');
-
-            // Add the extracted manga data to the list
-            $manga_list[] = [
-                'title' => $title,
-                'url' => $url,
-                'cover_image' => $cover_image,
-                'description' => trim($description),
-                'genres' => implode(', ', $genres),
-                'status' => trim($status),
-                'last_updated' => trim($last_updated),
-                'latest_chapter' => $latest_chapter,
-            ];
-        }
-
-        // Return an error message if no manga are found
-        if (empty($manga_list)) {
-            return ['error' => 'No manga found on the provided URL.'];
-        }
-
-        // Return the list of manga data
-        return $manga_list;
+                'vars' => $vars,
+            ],
+        ]);
+        return self::parse_response($response, false);
     }
 
-    /**
-     * Fetch detailed manga data from a specific URL.
-     *
-     * @param string $url The URL of the manga.
-     * @return array The detailed manga data or an error message.
-     */
     public static function get_manga_details($url) {
-        // Perform the HTTP request to fetch manga details
-        $response = wp_remote_get($url, ['sslverify' => false]);
+        return self::parse_response(wp_safe_remote_get($url, ['timeout' => 30]), true);
+    }
 
-        // Check for errors in the response
+    private static function parse_response($response, $details) {
         if (is_wp_error($response)) {
             return ['error' => $response->get_error_message()];
         }
-
-        // Retrieve and process the response body
-        $html = wp_remote_retrieve_body($response);
-        $html = mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8');
-
-        // Load the HTML into a DOMDocument for parsing
-        libxml_use_internal_errors(true);
-        $dom = new DOMDocument();
-        $dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-        libxml_clear_errors();
-
-        // Use XPath to query the DOM for detailed manga data
-        $xpath = new DOMXPath($dom);
-
-        // Extract the manga details
-        $title = $xpath->query('//h1[@class="title"]')->item(0)->nodeValue;
-        $cover_image = $xpath->query('//div[@class="thumb"]/img')->item(0)->getAttribute('src');
-        $description = $xpath->query('//div[@class="description-summary"]/div[@class="summary__content show-more"]')->item(0)->nodeValue;
-        $genres = [];
-        $genre_elements = $xpath->query('//div[@class="genres-content"]/a');
-        foreach ($genre_elements as $genre) {
-            $genres[] = $genre->nodeValue;
+        if (wp_remote_retrieve_response_code($response) !== 200) {
+            return ['error' => 'The source returned HTTP ' . wp_remote_retrieve_response_code($response) . '.'];
         }
-        $status = $xpath->query('//div[@class="post-status"]/div[@class="summary-content"]/a')->item(0)->nodeValue;
+        $html = wp_remote_retrieve_body($response);
+        if (trim($html) === '') {
+            return $details ? ['error' => 'The source returned an empty page.'] : [];
+        }
+        $previous = libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NONET);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+        $xpath = new DOMXPath($dom);
+        if ($details) {
+            $title = self::text($xpath, '//h1');
+            if ($title === '') {
+                return ['error' => 'No title found on the source page.'];
+            }
+            return [
+                'title' => $title,
+                'cover_image' => self::image($xpath, '//div[' . self::has_class('thumb') . ']//img'),
+                'description' => self::text($xpath, '//div[' . self::has_class('description-summary') . ']'),
+                'genres' => self::text($xpath, '//div[' . self::has_class('genres-content') . ']'),
+                'status' => self::text($xpath, '//div[' . self::has_class('post-status') . ']//div[' . self::has_class('summary-content') . ']'),
+            ];
+        }
+        $items = $xpath->query('//div[' . self::has_class('c-tabs-item__content') . ']');
+        $list = [];
+        foreach ($items as $item) {
+            $title = $xpath->query('.//div[' . self::has_class('post-title') . ']//a', $item)->item(0);
+            if (!$title || trim($title->textContent) === '' || !$title->getAttribute('href')) {
+                continue;
+            }
+            $data = [
+                'title' => trim($title->textContent),
+                'url' => esc_url_raw($title->getAttribute('href')),
+                'cover_image' => self::image($xpath, './/div[' . self::has_class('tab-thumb') . ']//img', $item),
+                'description' => '', 'genres' => '', 'status' => '',
+                'last_updated' => self::text($xpath, './/div[' . self::has_class('post-on') . ']', $item),
+                'latest_chapter' => self::text($xpath, './/div[' . self::has_class('latest-chap') . ']//a', $item),
+            ];
+            foreach ($xpath->query('.//div[' . self::has_class('summary-heading') . ']', $item) as $heading) {
+                $label = strtolower(rtrim(trim($heading->textContent), ':'));
+                // Pair each heading with its sibling, including unknown headings.
+                $value = self::text($xpath, 'following-sibling::div[' . self::has_class('summary-content') . ']', $heading);
+                if ($label === 'alternative') {
+                    $data['description'] = $value;
+                } elseif ($label === 'genres' || $label === 'status') {
+                    $data[$label] = $value;
+                }
+            }
+            if ($data['url'] !== '') {
+                $list[] = $data;
+            }
+        }
+        // Madara returns an empty fragment (or "0") at the end of pagination.
+        $end_marker = $xpath->query('//*[' . self::has_class('no-posts') . ']')->length > 0;
+        if (!$list && !$end_marker && trim($html) !== '0' && trim($html) !== '-1') {
+            return ['error' => 'No recognizable Madara results found. Check the source URL.'];
+        }
+        if (trim($html) === '-1') {
+            return ['error' => 'The source rejected the request.'];
+        }
+        return $list;
+    }
 
-        // Return the detailed manga data
-        return [
-            'title' => trim($title),
-            'cover_image' => $cover_image,
-            'description' => trim($description),
-            'genres' => implode(', ', $genres),
-            'status' => trim($status)
-        ];
+    private static function has_class($name) {
+        return 'contains(concat(" ", normalize-space(@class), " "), " ' . $name . ' ")';
+    }
+
+    private static function text($xpath, $query, $context = null) {
+        $node = $xpath->query($query, $context)->item(0);
+        return $node ? trim($node->textContent) : '';
+    }
+
+    private static function image($xpath, $query, $context = null) {
+        $node = $xpath->query($query, $context)->item(0);
+        if (!$node) {
+            return '';
+        }
+        foreach (['data-src', 'data-lazy-src', 'src'] as $attribute) {
+            if (trim($node->getAttribute($attribute)) !== '') {
+                return esc_url_raw(trim($node->getAttribute($attribute)));
+            }
+        }
+        return '';
     }
 }
